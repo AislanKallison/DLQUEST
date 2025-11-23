@@ -8,10 +8,10 @@ const cors = require('cors');
 // --- Configuração do PostgreSQL ---
 // Usamos as credenciais de teste fornecidas anteriormente
 const pool = new Pool({
-    user: 'gamificacao_db',
+    user: 'postgres',
     host: 'localhost',
-    database: 'gamificacao_db',
-    password: 'senha 1234',
+    database: 'gameficacao_db',
+    password: '1234',
     port: 5432,
 });
 
@@ -58,6 +58,9 @@ app.post('/api/signup', async (req, res) => {
             [name, email, hashedPassword]
         );
         const userId = userResult.rows[0].id;
+
+        // Limpa qualquer entrada órfã em user_stats (defensivo para dev)
+        await client.query('DELETE FROM user_stats WHERE user_id = $1', [userId]);
 
         // Cria a entrada de estatísticas inicial (Obrigatório para o Trigger!)
         await client.query(
@@ -264,8 +267,19 @@ app.post('/api/register-and-complete-test', async (req, res) => {
     let email, token;
     
     try {
-        // 1. Limpa o ambiente
+        // 0. Limpeza inicial robusta de dados de teste órfãos (evita violações de chave única)
+        await client.query(`
+            DELETE FROM missions 
+            WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'teste_trigger_%@xp.com')
+        `);
+        await client.query(`
+            DELETE FROM user_stats 
+            WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'teste_trigger_%@xp.com')
+        `);
         await client.query("DELETE FROM users WHERE email LIKE 'teste_trigger_%@xp.com'");
+
+        // 1. Limpa o ambiente (redundante, mas seguro)
+        // (já feito acima)
 
         // 2. Cria um novo usuário de teste
         email = `teste_trigger_${Date.now()}@xp.com`;
@@ -278,7 +292,10 @@ app.post('/api/register-and-complete-test', async (req, res) => {
         );
         const userId = userResult.rows[0].id;
         
-        // 3. Cria a entrada de estatísticas inicial
+        // 3. Limpa qualquer entrada órfã em user_stats (defensivo para evitar duplicatas)
+        await client.query('DELETE FROM user_stats WHERE user_id = $1', [userId]);
+
+        // Cria a entrada de estatísticas inicial
         await client.query('INSERT INTO user_stats (user_id) VALUES ($1)', [userId]);
 
         // 4. Cria duas missões (uma concluída, uma pendente)
@@ -304,8 +321,7 @@ app.post('/api/register-and-complete-test', async (req, res) => {
         const statsResult = await client.query('SELECT xp, missions_completed FROM user_stats WHERE user_id = $1', [userId]);
         const stats = statsResult.rows[0];
 
-        // 7. Limpa a missão de teste (missão 1 fica pendente, missão 2 fica concluída)
-        // O usuário de teste deve ser limpo no finally.
+        // 7. Gera token para o usuário de teste
 
         token = jwt.sign({ id: userId, email: email }, JWT_SECRET, { expiresIn: '1h' });
 
@@ -324,8 +340,20 @@ app.post('/api/register-and-complete-test', async (req, res) => {
         res.status(500).json({ error: 'Erro no teste do trigger', details: error.message });
     } finally {
         if (email) {
-            // Tenta limpar o usuário de teste
-            await client.query("DELETE FROM users WHERE email = $1", [email]).catch(err => console.error('Erro ao limpar usuário de teste:', err));
+            // Limpeza final robusta (em ordem reversa: filhos primeiro)
+            try {
+                await client.query(`
+                    DELETE FROM missions 
+                    WHERE user_id IN (SELECT id FROM users WHERE email = $1)
+                `, [email]);
+                await client.query(`
+                    DELETE FROM user_stats 
+                    WHERE user_id IN (SELECT id FROM users WHERE email = $1)
+                `, [email]);
+                await client.query("DELETE FROM users WHERE email = $1", [email]);
+            } catch (cleanupErr) {
+                console.error('Erro ao limpar usuário de teste:', cleanupErr);
+            }
         }
         client.release();
     }
@@ -346,4 +374,4 @@ pool.query('SELECT NOW()')
     .then(() => console.log('Conexão com PostgreSQL bem-sucedida!'))
     .catch(err => console.error('Erro ao conectar ao PostgreSQL:', err.stack));
 
-module.exports = app; 
+module.exports = app;

@@ -1,17 +1,12 @@
-require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
-const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const bodyParser = require('body-parser');
+const cors = require('cors');
 
-const app = express();
-app.use(cors());
-app.use(bodyParser.json());
-app.use(express.json());
-
-// ============ CONFIGURAÇÃO DO BANCO ============
+// --- Configuração do PostgreSQL ---
+// Usamos as credenciais de teste fornecidas anteriormente
 const pool = new Pool({
     user: 'postgres',
     host: 'localhost',
@@ -20,240 +15,363 @@ const pool = new Pool({
     port: 5432,
 });
 
-const JWT_SECRET = 'sua_chave_secreta_muito_forte_2025_xyz_@#$_change_in_production';
+const app = express();
+const PORT = 3000;
+const JWT_SECRET = 'sua_chave_secreta_muito_segura'; // Mantenha isso secreto!
 
-// ============ AUTENTICAÇÃO MIDDLEWARE ============
+// --- Middleware ---
+app.use(cors()); // Permite requisições do frontend (localhost:3000)
+app.use(bodyParser.json());
+
+// --- Middleware de Autenticação JWT ---
 function authenticateToken(req, res, next) {
-    const token = req.headers['authorization']?.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Token necessário' });
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    if (token == null) return res.status(401).json({ error: 'Token necessário' });
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) return res.status(403).json({ error: 'Token inválido ou expirado' });
-        req.user = user;
+        req.user = user; // Adiciona o payload do usuário à requisição
         next();
     });
 }
 
 // =================================================================
-// ROTAS DE AUTENTICAÇÃO E PERFIL
+// 1. ROTAS DE AUTENTICAÇÃO (Login e Cadastro)
 // =================================================================
 
-app.post('/api/register', async (req, res) => {
+// Cadastro de novo usuário
+app.post('/api/signup', async (req, res) => {
     const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+        return res.status(400).json({ error: 'Dados incompletos.' });
+    }
+
     try {
-        const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-        if (check.rows.length > 0) return res.status(400).json({ error: 'E-mail já cadastrado' });
-
-        const hash = await bcrypt.hash(password, 12);
-        const result = await pool.query(
-            'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id, name, email, avatar_initials',
-            [name, email, hash]
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const client = await pool.connect();
+        
+        // Insere o novo usuário
+        const userResult = await client.query(
+            'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id',
+            [name, email, hashedPassword]
         );
-        const userId = result.rows[0].id;
+        const userId = userResult.rows[0].id;
 
-        // Inicializa stats
-        await pool.query(
-            'INSERT INTO user_stats (user_id, xp, accumulated_points, level) VALUES ($1, 0, 0, 1) ON CONFLICT (user_id) DO NOTHING',
+        // Limpa qualquer entrada órfã em user_stats (defensivo para dev)
+        await client.query('DELETE FROM user_stats WHERE user_id = $1', [userId]);
+
+        // Cria a entrada de estatísticas inicial (Obrigatório para o Trigger!)
+        await client.query(
+            'INSERT INTO user_stats (user_id) VALUES ($1)',
             [userId]
         );
 
-        res.status(201).json({ message: 'Usuário criado com sucesso!', user: result.rows[0] });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Erro no cadastro' });
+        client.release();
+        res.status(201).json({ message: 'Usuário registrado com sucesso.' });
+    } catch (error) {
+        if (error.code === '23505') { // Código de erro de violação de chave única (email)
+            return res.status(409).json({ error: 'E-mail já cadastrado.' });
+        }
+        console.error('Erro no cadastro:', error);
+        res.status(500).json({ error: 'Erro interno do servidor.' });
     }
 });
 
+// Login de usuário
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
+    
     try {
-        const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-        if (result.rows.length === 0) return res.status(400).json({ error: 'Usuário não encontrado' });
+        const client = await pool.connect();
+        const userResult = await client.query('SELECT id, name, password_hash FROM users WHERE email = $1', [email]);
+        client.release();
 
-        const user = result.rows[0];
-        const valid = await bcrypt.compare(password, user.password_hash);
-        if (!valid) return res.status(400).json({ error: 'Senha incorreta' });
+        const user = userResult.rows[0];
+        if (!user) {
+            return res.status(401).json({ error: 'Credenciais inválidas.' });
+        }
 
-        const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+        const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+        if (!isPasswordValid) {
+            return res.status(401).json({ error: 'Credenciais inválidas.' });
+        }
 
-        res.json({
-            token,
-            user: { id: user.id, name: user.name, email: user.email, avatar: user.avatar_initials }
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Erro no login' });
-    }
-});
-
-app.get('/api/user', authenticateToken, async (req, res) => {
-    try {
-        const user = await pool.query('SELECT id, name, email, avatar_initials FROM users WHERE id = $1', [req.user.id]);
-        const stats = await pool.query('SELECT * FROM user_stats WHERE user_id = $1', [req.user.id]);
-
-        res.json({
-            user: user.rows[0],
-            userStats: stats.rows[0] || {}
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Erro ao carregar perfil' });
-    }
-});
-
-// =================================================================
-// ROTAS DE MISSÕES
-// =================================================================
-
-app.get('/api/missions', authenticateToken, async (req, res) => {
-    try {
-        const missions = await pool.query('SELECT * FROM missions WHERE user_id = $1 ORDER BY id DESC', [req.user.id]);
-        res.json(missions.rows);
-    } catch (err) {
-        res.status(500).json({ error: 'Erro ao buscar missões' });
-    }
-});
-
-app.post('/api/missions', authenticateToken, async (req, res) => {
-    const { title, description, category, reward } = req.body;
-    const finalReward = Math.max(10, parseInt(reward) || 10);
-
-    try {
-        const mission = await pool.query(
-            'INSERT INTO missions (user_id, title, description, category, reward) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-            [req.user.id, title, description, category, finalReward]
+        // Gera o Token JWT
+        const token = jwt.sign(
+            { id: user.id, email: email, name: user.name }, 
+            JWT_SECRET, 
+            { expiresIn: '24h' } // Token válido por 24 horas
         );
-        res.status(201).json(mission.rows[0]);
-    } catch (err) {
-        res.status(500).json({ error: 'Erro ao criar missão' });
+
+        res.json({ token, user: { id: user.id, name: user.name, email } });
+    } catch (error) {
+        console.error('Erro no login:', error);
+        res.status(500).json({ error: 'Erro interno do servidor.' });
     }
 });
 
-// Toggle (BURRO): Apenas atualiza status e completed_at. O Trigger do PG faz o XP.
-app.put('/api/missions/:id/toggle', authenticateToken, async (req, res) => {
+// =================================================================
+// 2. ROTAS PROTEGIDAS (Missões e Dados do Usuário)
+// =================================================================
+
+// Rota 2.1: Obter todos os dados do usuário e do dashboard (PROTEGIDA)
+app.get('/api/user-data', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+
+    try {
+        const client = await pool.connect();
+        
+        // 1. Dados do Usuário (name, email)
+        const userResult = await client.query('SELECT name, email FROM users WHERE id = $1', [userId]);
+        const user = userResult.rows[0];
+
+        // 2. Estatísticas do Usuário
+        const statsResult = await client.query('SELECT * FROM user_stats WHERE user_id = $1', [userId]);
+        const user_stats = statsResult.rows[0];
+
+        // 3. Missões recentes (últimas 5, não concluídas ou as últimas concluídas)
+        const missionsResult = await client.query(
+            'SELECT * FROM missions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5',
+            [userId]
+        );
+        const recent_missions = missionsResult.rows;
+
+        client.release();
+
+        if (!user || !user_stats) {
+            return res.status(404).json({ error: 'Dados do usuário não encontrados.' });
+        }
+
+        res.json({ user, user_stats, recent_missions });
+
+    } catch (error) {
+        console.error('Erro ao buscar dados do usuário:', error);
+        res.status(500).json({ error: 'Erro interno do servidor.' });
+    }
+});
+
+// Rota 2.2: Criar nova Missão (PROTEGIDA - Frontend chama essa rota)
+app.post('/api/missions', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+    const { title, description, category, reward, status } = req.body;
+    
+    if (!title || !reward) {
+        return res.status(400).json({ error: 'Título e recompensa são obrigatórios.' });
+    }
+
+    try {
+        const client = await pool.connect();
+        const result = await client.query(
+            'INSERT INTO missions (user_id, title, description, category, reward, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [userId, title, description, category || 'Geral', reward, status || 'Pendente']
+        );
+        client.release();
+
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao adicionar missão:', error);
+        res.status(500).json({ error: 'Erro interno do servidor.' });
+    }
+});
+
+// Rota 2.3: Listar todas as Missões (PROTEGIDA)
+app.get('/api/missions', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+
+    try {
+        const client = await pool.connect();
+        const result = await client.query('SELECT * FROM missions WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+        client.release();
+
+        res.json({ missions: result.rows });
+    } catch (error) {
+        console.error('Erro ao buscar missões:', error);
+        res.status(500).json({ error: 'Erro interno do servidor.' });
+    }
+});
+
+// Rota 2.4: Obter detalhes de uma Missão (Para Modal)
+app.get('/api/missions/:id', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
     const missionId = req.params.id;
 
     try {
-        const current = await pool.query('SELECT status FROM missions WHERE id = $1 AND user_id = $2', [missionId, req.user.id]);
-        if (current.rows.length === 0) return res.status(404).json({ error: 'Missão não encontrada' });
+        const client = await pool.connect();
+        const result = await client.query('SELECT * FROM missions WHERE id = $1 AND user_id = $2', [missionId, userId]);
+        client.release();
 
-        const newStatus = current.rows[0].status === 'Concluído' ? 'Pendente' : 'Concluído';
-        const completedAt = newStatus === 'Concluído' ? new Date() : null;
-
-        const updated = await pool.query(
-            'UPDATE missions SET status = $1, completed_at = $2 WHERE id = $3 AND user_id = $4 RETURNING *',
-            [newStatus, completedAt, missionId, req.user.id]
-        );
-
-        res.json(updated.rows[0]);
-    } catch (err) {
-        console.error('Erro no toggle:', err);
-        res.status(500).json({ error: 'Erro ao atualizar missão' });
-    }
-});
-
-app.delete('/api/missions/:id', authenticateToken, async (req, res) => {
-    try {
-        const result = await pool.query('DELETE FROM missions WHERE id = $1 AND user_id = $2 RETURNING id', [req.params.id, req.user.id]);
-        if (result.rowCount === 0) return res.status(404).json({ error: 'Missão não encontrada' });
-        res.json({ success: true, message: 'Missão deletada com sucesso.' });
-    } catch (err) {
-        res.status(500).json({ error: 'Erro ao deletar' });
-    }
-});
-
-// =================================================================
-// ROTAS DE TESTE E VALIDAÇÃO DE GATILHO (XP)
-// =================================================================
-
-// Teste de Conexão DB
-app.get('/api/test-db', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT NOW()');
-        res.json({ success: true, time: result.rows[0] });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ROTA DE TESTE FINAL (100% ROBUSTA E REPETÍVEL)
-app.post('/api/register-and-complete-test', async (req, res) => {
-    const client = await pool.connect();
-    let userId = null;
-    try {
-        await client.query('BEGIN');
-
-        const timestamp = Date.now();
-        const email = `teste_${timestamp}@xp.com`;
-
-        const hash = await bcrypt.hash('123456', 12);
-        const userRes = await client.query(
-            'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id',
-            [`Teste ${timestamp}`, email, hash]
-        );
-        userId = userRes.rows[0].id;
-
-        await client.query('INSERT INTO user_stats (user_id, xp, accumulated_points, level) VALUES ($1, 0, 0, 1)', [userId]);
-
-        const mission = await client.query(
-            'INSERT INTO missions (user_id, title, category, reward) VALUES ($1, $2, $3, $4) RETURNING id',
-            [userId, 'Missão de Teste Trigger', 'Teste', 100]
-        );
-        const missionId = mission.rows[0].id;
-
-        // Atualiza a missão para concluída, o trigger deve disparar aqui
-        await client.query(
-            'UPDATE missions SET status = $1, completed_at = NOW() WHERE id = $2',
-            ['Concluído', missionId]
-        );
-
-        const stats = await client.query(
-            'SELECT COALESCE(accumulated_points, xp) AS points, missions_completed FROM user_stats WHERE user_id = $1',
-            [userId]
-        );
-
-        const finalPoints = stats.rows[0]?.points || 0;
-        const missionsCompleted = stats.rows[0]?.missions_completed || 0;
-
-        await client.query('COMMIT');
-        
-        // Tenta limpar o usuário de teste após o COMMIT
-        try {
-            if (userId) await pool.query('DELETE FROM users WHERE id = $1', [userId]);
-        } catch (cleanError) {
-            console.warn('Falha na limpeza do usuário de teste:', cleanError.message);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Missão não encontrada ou não pertence ao usuário.' });
         }
+
+        res.json({ mission: result.rows[0] });
+    } catch (error) {
+        console.error('Erro ao buscar missão:', error);
+        res.status(500).json({ error: 'Erro interno do servidor.' });
+    }
+});
+
+// Rota 2.5: Concluir Missão (ROTA CRÍTICA - Dispara o Trigger do PG)
+app.patch('/api/missions/:id/complete', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+    const missionId = req.params.id;
+
+    try {
+        const client = await pool.connect();
+
+        // 1. Verifica o status atual da missão
+        const checkResult = await client.query(
+            'SELECT status, reward FROM missions WHERE id = $1 AND user_id = $2',
+            [missionId, userId]
+        );
+
+        if (checkResult.rows.length === 0) {
+            client.release();
+            return res.status(404).json({ error: 'Missão não encontrada.' });
+        }
+
+        const mission = checkResult.rows[0];
+
+        if (mission.status === 'Concluída') {
+            client.release();
+            return res.status(400).json({ error: 'Missão já concluída.' });
+        }
+
+        // 2. Atualiza a missão para 'Concluída' (Isto dispara o TRIGGER!)
+        const updateResult = await client.query(
+            "UPDATE missions SET status = 'Concluída', completed_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING reward",
+            [missionId, userId]
+        );
+
+        client.release();
+        
+        // Retorna a recompensa para o Frontend mostrar o feedback
+        res.json({ message: 'Missão concluída com sucesso.', reward: updateResult.rows[0].reward });
+        
+    } catch (error) {
+        console.error('Erro ao concluir missão (TRIGGER FALHOU?):', error);
+        res.status(500).json({ error: 'Erro interno ao concluir missão.' });
+    }
+});
+
+
+// =================================================================
+// 3. ROTA DE TESTE (Mantida para depuração do Trigger)
+// =================================================================
+
+app.post('/api/register-and-complete-test', async (req, res) => {
+    // Esta é uma rota de teste, não precisa de autenticação.
+    const client = await pool.connect();
+    let email, token;
+    
+    try {
+        // 0. Limpeza inicial robusta de dados de teste órfãos (evita violações de chave única)
+        await client.query(`
+            DELETE FROM missions 
+            WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'teste_trigger_%@xp.com')
+        `);
+        await client.query(`
+            DELETE FROM user_stats 
+            WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'teste_trigger_%@xp.com')
+        `);
+        await client.query("DELETE FROM users WHERE email LIKE 'teste_trigger_%@xp.com'");
+
+        // 1. Limpa o ambiente (redundante, mas seguro)
+        // (já feito acima)
+
+        // 2. Cria um novo usuário de teste
+        email = `teste_trigger_${Date.now()}@xp.com`;
+        const password = '123';
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        const userResult = await client.query(
+            'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id, name',
+            ['Teste Trigger', email, hashedPassword]
+        );
+        const userId = userResult.rows[0].id;
+        
+        // 3. Limpa qualquer entrada órfã em user_stats (defensivo para evitar duplicatas)
+        await client.query('DELETE FROM user_stats WHERE user_id = $1', [userId]);
+
+        // Cria a entrada de estatísticas inicial
+        await client.query('INSERT INTO user_stats (user_id) VALUES ($1)', [userId]);
+
+        // 4. Cria duas missões (uma concluída, uma pendente)
+        const mission1Result = await client.query(
+            "INSERT INTO missions (user_id, title, reward, status) VALUES ($1, $2, $3, $4) RETURNING id",
+            [userId, 'Missão Teste Pendente', 50, 'Pendente']
+        );
+        const mission1Id = mission1Result.rows[0].id;
+
+        const mission2Result = await client.query(
+            "INSERT INTO missions (user_id, title, reward, status) VALUES ($1, $2, $3, $4) RETURNING id",
+            [userId, 'Missão Teste Concluída', 100, 'Pendente']
+        );
+        const mission2Id = mission2Result.rows[0].id;
+
+        // 5. Conclui a segunda missão (DISPARA O TRIGGER)
+        await client.query(
+            "UPDATE missions SET status = 'Concluída', completed_at = NOW() WHERE id = $1", 
+            [mission2Id]
+        );
+        
+        // 6. Confirma o resultado do user_stats
+        const statsResult = await client.query('SELECT xp, missions_completed FROM user_stats WHERE user_id = $1', [userId]);
+        const stats = statsResult.rows[0];
+
+        // 7. Gera token para o usuário de teste
+
+        token = jwt.sign({ id: userId, email: email }, JWT_SECRET, { expiresIn: '1h' });
 
         res.json({
             status: 'success',
-            message: 'Trigger funcionando perfeitamente! Dados de teste criados e deletados.',
-            email_usado: email,
+            message: 'Trigger funcionando perfeitamente! Dados de teste criados e deletados',
             xp_ganho: 100,
-            xp_final: finalPoints,
-            missões_concluídas: missionsCompleted,
-            trigger_ok: finalPoints === 100 && missionsCompleted === 1
+            xp_final: stats.xp,
+            missões_concluídas: stats.missions_completed,
+            email_usado: email,
+            token_gerado: token
         });
-    } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('Erro no teste de trigger:', err);
         
-        // Tenta limpar o usuário de teste, mesmo em erro
-        try {
-            if (userId) await pool.query('DELETE FROM users WHERE id = $1', [userId]);
-        } catch (cleanError) {
-            // Ignore clean error
-        }
-        
-        res.status(500).json({ error: 'Erro no teste do trigger', details: err.message });
+    } catch (error) {
+        console.error('Erro no teste do trigger:', error);
+        res.status(500).json({ error: 'Erro no teste do trigger', details: error.message });
     } finally {
+        if (email) {
+            // Limpeza final robusta (em ordem reversa: filhos primeiro)
+            try {
+                await client.query(`
+                    DELETE FROM missions 
+                    WHERE user_id IN (SELECT id FROM users WHERE email = $1)
+                `, [email]);
+                await client.query(`
+                    DELETE FROM user_stats 
+                    WHERE user_id IN (SELECT id FROM users WHERE email = $1)
+                `, [email]);
+                await client.query("DELETE FROM users WHERE email = $1", [email]);
+            } catch (cleanupErr) {
+                console.error('Erro ao limpar usuário de teste:', cleanupErr);
+            }
+        }
         client.release();
     }
 });
 
-// ============ SERVIDOR ============
-app.listen(3000, () => {
-    console.log('🚀 Servidor rodando em http://localhost:3000');
-    console.log('✅ Tudo pronto: body-parser, completed_at, trigger puro, teste robusto');
-    console.log('POST /api/register-and-complete-test → Testa o trigger do início ao fim');
+
+// =================================================================
+// 4. INICIALIZAÇÃO DO SERVIDOR
+// =================================================================
+
+app.listen(PORT, () => {
+    console.log(`Servidor rodando em http://localhost:${PORT}`);
+    console.log('Tudo pronto: API de Gamificação conectada ao PostgreSQL.');
 });
 
-module.exports = app; 
+// Testa a conexão ao iniciar
+pool.query('SELECT NOW()')
+    .then(() => console.log('Conexão com PostgreSQL bem-sucedida!'))
+    .catch(err => console.error('Erro ao conectar ao PostgreSQL:', err.stack));
 
+module.exports = app; 
