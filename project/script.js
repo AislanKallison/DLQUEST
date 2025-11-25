@@ -424,6 +424,27 @@ function showMessage(message, type = 'success') {
 function showSuccessMessage(message) {
     showMessage(message, 'success');
 }
+document.addEventListener("DOMContentLoaded", function () {
+    const form = document.getElementById("loginForm");
+
+    form.addEventListener("submit", function (event) {
+        event.preventDefault(); // impede recarregar a página
+
+        const email = document.getElementById("email").value.trim();
+        const password = document.getElementById("password").value.trim();
+
+        // VERIFICAÇÃO SIMPLES
+        if (email === "" || password === "") {
+            alert("Preencha todos os campos!");
+            return;
+        }
+
+        // Se passou → vai para o dashboard
+        window.location.href = "../project/dashboard.html";
+    });
+});
+
+
 
 function showErrorMessage(message) {
     showMessage(message, 'error');
@@ -437,12 +458,11 @@ function customConfirm(message) {
     return Promise.resolve(window.confirm(message));
 }
 
-
 function handleLogout() {
     if (customConfirm('Tem certeza que deseja sair?')) {
         localStorage.removeItem('token');
         showSuccessMessage('Você foi desconectado. Redirecionando...');
-        // window.location.href = '/login'; // Descomente em um ambiente real
+        window.location.href = "../front/login.html"; // Descomente em um ambiente real
     }
 }
 
