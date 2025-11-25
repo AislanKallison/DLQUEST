@@ -1,33 +1,36 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Daily Quest - Recuperar Senha</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <meta-name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Daily Quest - Recuperar Senha</title>
+        <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <div class="container">
         <div class="login-card">
             <h2>Recuperação de Senha</h2>
-            <p>Informe seu e-mail para receber o link de redefinição.</p>
+            <p>Digite seu nome de usuário para gerar uma nova senha.</p>
 
             <form id="forgotForm">
                 <div class="input-group">
-                    <input type="email" id="forgot-email" placeholder="Email Address" required>
+                    <input type="text" id="forgot-user" placeholder="Nome de Usuário" required>
                 </div>
-                
-                <button type="submit" class="sign-in-btn">Enviar Link</button>
+
+                <button type="submit" class="sign-in-btn">Gerar Nova Senha</button>
             </form>
+
+            <p id="result" style="margin-top: 15px; font-weight: bold;"></p>
 
             <p class="signup-link">
                 <a href="login.html">Voltar para o Login</a>
             </p>
         </div>
     </div>
-    
-    <script src="./script.js"></script> 
+
+    <script src="./script.js"></script>
 </body>
-</html> 
+
+</html>

@@ -402,10 +402,39 @@ async function clearAllData() {
     }
 }
 
+document.getElementById("loginForm").addEventListener("submit", function (e) {
+    e.preventDefault(); // impede o reload da página
+
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    const rememberMe = document.getElementById("rememberMe").checked;
+
+    // ==== SIMULAÇÃO DE LOGIN (para testes locais) ====
+    // Quando você ainda não tem backend, pode usar isso para testar:
+    if (email && password) {
+        // Salva no localStorage que o usuário está logado (útil para o dashboard verificar)
+        if (rememberMe) {
+            localStorage.setItem("isLoggedIn", "true");
+            localStorage.setItem("userEmail", email);
+        } else {
+            sessionStorage.setItem("isLoggedIn", "true");
+            sessionStorage.setItem("userEmail", email);
+        }
+
+        // Mensagem de sucesso (opcional)
+        alert("Login realizado com sucesso!");
+
+        // Redireciona para o dashboard
+        window.location.href = "../project/dashboard.html"; // ou "../project/dashboard.html" dependendo da estrutura
+    } else {
+        alert("Preencha email e senha!");
+    }
+});
+
 function logout() {
     if (confirm('Tem certeza que deseja sair?')) {
         alert('Você foi desconectado. Redirecionando para a página de login...');
         // Aqui você poderia redirecionar para uma página de login
-        // window.location.href = '/login';
+        window.location.href = "../front/login.html";
     }
 }
