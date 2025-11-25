@@ -55,7 +55,7 @@ pool.query('SELECT NOW()', (err, res) => {
 // ==============================================================================
 // Adicione esta rota para a URL raiz
 app.get('/', (req, res) => {
-    res.send('Servidor da API de Gamificação está rodando. Use as rotas /api/...');
+    res.send('Servidor da API de gamificação_db está conectado e funcionando!');
 });
 
 // ... suas rotas /api/register-and-complete-test e outras rotas virão depois ...
