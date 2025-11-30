@@ -1,13 +1,14 @@
-
 # DLQUEST
 
-Um projeto de sistema/aplicação que integra front-end (web) + servidor,
-focado em ... *(descreva brevemente o propósito principal)*.
+Um projeto de sistema Web + servidor backend focado em gamificação do dia a dia, ajudando o usuário a organizar tarefas de forma divertida e motivadora.
 
 ## 🚀 Visão geral
 
-DLQUEST fornece uma plataforma para ... *(explique o que o sistema faz:
-consulta, dashboard, quiz, questionário, etc.)*.\
+O DLQUEST (Daily Quest) é uma plataforma que transforma sua rotina em um jogo.
+Nele, você pode cadastrar atividades, marcar como concluídas, acompanhar seu progresso e ganhar recompensas — como um sistema similar ao “foguinhos do TikTok”, além de streaks, níveis, e desafios diários.
+
+A proposta é unir produtividade + gamificação, fazendo com que o usuário se mantenha motivado enquanto organiza suas tarefas.
+
 Ele consiste em duas partes principais:
 
 -   **Front‑end** (`/front`) --- interface web construída com HTML, CSS
@@ -50,21 +51,10 @@ Ele consiste em duas partes principais:
 2.  Instale dependências no servidor:
 
         cd server
-        npm install
+        npm init -y
+        npm install express cors pg jsonwebtoken bcrypt body-parser
 
-3.  Instale dependências no front-end:
-
-        cd ../front
-        npm install
-
-4.  Configure variáveis de ambiente (exemplo `.env`):
-
-        PORT=3000
-        DB_HOST=localhost
-        DB_USER=usuario
-        DB_PASS=senha
-
-5.  Inicie o servidor:
+3.  Inicie o servidor:
 
         cd ../server
         npm start
@@ -89,7 +79,7 @@ Ele consiste em duas partes principais:
 
 -   Front-end: HTML, CSS, JS\
 -   Back-end: Node.js, Express\
--   Banco de dados: definir conforme projeto
+-   Banco de dados: PostgreSQL
 
 ## ✅ Como contribuir
 
@@ -98,4 +88,3 @@ Ele consiste em duas partes principais:
 3.  Commit\
 4.  Push\
 5.  Pull Request
-
